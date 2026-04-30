@@ -1,0 +1,48 @@
+# ----------------------
+# Python / Backend
+# ----------------------
+venv/
+.env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# SQLite (if ever used)
+*.db
+
+# Logs
+*.log
+
+# ----------------------
+# Node / Frontend
+# ----------------------
+node_modules/
+build/
+dist/
+
+# ----------------------
+# OS / Editor
+# ----------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ----------------------
+# Environment files
+# ----------------------
+.env
+.env.*
+
+# ----------------------
+# Docker
+# ----------------------
+*.env
+docker-compose.override.yml
+
+# ----------------------
+# Misc
+# ----------------------
+*.swp
+*.bak
