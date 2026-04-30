@@ -275,7 +275,7 @@ Includes:
 - Docker setup
 - README
 
-## 🖥️ Dashboard Preview
+## Dashboard Preview
 
 ![Dashboard](./screenshot/dashboard.png)
 
@@ -284,7 +284,7 @@ UI integrates fully with backend APIs and supports full incident lifecycle manag
 
 - This project was developed using iterative planning and system design prompts.
 - Design decisions, architecture, and implementation steps were documented during development.
-## 📁 Project Structure
+## Project Structure
 
 backend/
 
