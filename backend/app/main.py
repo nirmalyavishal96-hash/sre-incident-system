@@ -14,11 +14,17 @@ from fastapi.responses import Response
 
 from fastapi.middleware.cors import CORSMiddleware
 
+# STATE MACHINE
+VALID_TRANSITIONS = {
+    "OPEN": ["INVESTIGATING"],
+    "INVESTIGATING": ["RESOLVED"],
+    "RESOLVED": ["CLOSED"],
+    "CLOSED": []
+}
+
 app = FastAPI()
 
-
 # CORS
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,13 +33,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # DB Setup
-
 Base.metadata.create_all(bind=engine)
 
 
-# PROMETHEUS METRICS (FINAL)
+# PROMETHEUS METRICS
 
 
 REQUEST_COUNT = Counter(
@@ -53,7 +57,6 @@ QUEUE_SIZE = Gauge(
     "Current Redis queue size"
 )
 
-# NEW — LATENCY HISTOGRAM
 REQUEST_LATENCY = Histogram(
     "request_latency_seconds",
     "API request latency in seconds",
@@ -61,7 +64,7 @@ REQUEST_LATENCY = Histogram(
 )
 
 
-# GLOBAL MIDDLEWARE (COUNT + LATENCY)
+# MIDDLEWARE
 
 
 @app.middleware("http")
@@ -72,7 +75,6 @@ async def metrics_middleware(request: Request, call_next):
         response = await call_next(request)
         status_code = response.status_code
     except Exception:
-        # Capture errors
         status_code = 500
         REQUEST_COUNT.labels(
             method=request.method,
@@ -80,16 +82,14 @@ async def metrics_middleware(request: Request, call_next):
             status=status_code
         ).inc()
 
-        # Also track latency
         latency = time.time() - start_time
         REQUEST_LATENCY.labels(
             method=request.method,
             endpoint=request.url.path
         ).observe(latency)
 
-        raise  # re-raise error
+        raise
 
-    # Normal request
     REQUEST_COUNT.labels(
         method=request.method,
         endpoint=request.url.path,
@@ -102,11 +102,10 @@ async def metrics_middleware(request: Request, call_next):
         endpoint=request.url.path
     ).observe(latency)
 
-
     return response
 
 
-# Metrics Logging (Signals/sec)
+# SIGNAL RATE LOGGER
 
 
 signal_count = 0
@@ -124,7 +123,7 @@ def log_metrics():
 threading.Thread(target=log_metrics, daemon=True).start()
 
 
-# Rate Limiting
+# RATE LIMITING
 
 
 rate_limit_store = {}
@@ -132,31 +131,26 @@ RATE_LIMIT = 5
 WINDOW = 10
 
 
-# Root
+# BASIC ROUTES
 
 
 @app.get("/")
 def root():
     return {"message": "IMS Backend Running"}
 
-
-# Health
-
-
 @app.get("/health")
 def health():
-    return {"status": "ok"}
-
-
-# Prometheus Metrics Endpoint
-
+    return {
+        "status": "ok",
+        "queue_size": redis_client.llen("signal_queue")
+    }
 
 @app.get("/metrics")
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-# Ingestion API
+# INGESTION API
 
 
 @app.post("/ingest")
@@ -180,10 +174,8 @@ def ingest_signal(payload: dict, request: Request):
 
     rate_limit_store[client_ip].append(now)
 
-    # Push to Redis
     redis_client.rpush("signal_queue", json.dumps(payload))
 
-    # Update queue metric
     QUEUE_SIZE.set(redis_client.llen("signal_queue"))
 
     signal_count += 1
@@ -191,7 +183,7 @@ def ingest_signal(payload: dict, request: Request):
     return {"status": "queued"}
 
 
-# Get Incidents (MTTR)
+# INCIDENTS
 
 
 @app.get("/incidents")
@@ -209,6 +201,7 @@ def get_incidents():
             "id": i.id,
             "component": i.component,
             "status": i.status,
+            "severity": i.severity,
             "created_at": i.created_at,
             "resolved_at": i.resolved_at,
             "mttr_seconds": mttr
@@ -218,7 +211,7 @@ def get_incidents():
     return result
 
 
-# Update Status
+# UPDATE STATUS (FIXED)
 
 
 @app.put("/incidents/{incident_id}/status")
@@ -231,22 +224,40 @@ def update_status(incident_id: int, payload: StatusUpdate):
         db.close()
         return {"error": "Incident not found"}
 
-    if payload.status == "CLOSED":
-        if not incident.rca:
-            db.close()
-            return {"error": "Cannot close incident without RCA"}
+    current_status = incident.status
+    new_status = payload.status
 
+    # Validate transition
+    if new_status not in VALID_TRANSITIONS.get(current_status, []):
+        db.close()
+        return {
+            "error": f"Invalid transition from {current_status} to {new_status}"
+        }
+
+    # RCA enforcement before closing
+    if new_status == "CLOSED":
+        if not incident.rca or not incident.rca.root_cause or not incident.rca.fix:
+            db.close()
+            return {"error": "Complete RCA required before closing"}
+
+    # Set resolved_at ONLY once
+    if new_status == "RESOLVED" and not incident.resolved_at:
         incident.resolved_at = datetime.utcnow()
 
-    incident.status = payload.status
+    incident.status = new_status
+    print(f"[STATUS CHANGE] Incident {incident.id}: {current_status} → {new_status}")
     db.commit()
     db.refresh(incident)
-
     db.close()
-    return {"message": "Status updated", "status": incident.status}
+
+    return {
+        "message": "Status updated",
+        "from": current_status,
+        "to": new_status
+    }
 
 
-# Add RCA
+# RCA API (FIXED)
 
 
 @app.post("/incidents/{incident_id}/rca")
@@ -259,6 +270,11 @@ def add_rca(incident_id: int, payload: RCACreate):
         db.close()
         return {"error": "Incident not found"}
 
+    # Prevent duplicate RCA
+    if incident.rca:
+        db.close()
+        return {"error": "RCA already exists for this incident"}
+
     new_rca = RCA(
         incident_id=incident_id,
         root_cause=payload.root_cause,
@@ -267,16 +283,20 @@ def add_rca(incident_id: int, payload: RCACreate):
 
     db.add(new_rca)
     db.commit()
+    print(f"[RCA ADDED] Incident {incident.id}")
 
     db.close()
     return {"message": "RCA added"}
+
+
+# TEST ENDPOINTS
+
+
 @app.get("/error")
 def error():
     raise Exception("Test error")
 
-import time
-
 @app.get("/slow")
 def slow():
-    time.sleep(1)  # simulate slow API
+    time.sleep(1)
     return {"message": "slow response"}
