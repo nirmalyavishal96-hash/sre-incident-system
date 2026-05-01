@@ -1,59 +1,90 @@
 import React, { useEffect, useState } from "react";
 
+const API_URL = "http://localhost:8000";
+
 function App() {
   const [incidents, setIncidents] = useState([]);
   const [selected, setSelected] = useState(null);
   const [rca, setRca] = useState({ root_cause: "", fix: "" });
 
+  // Fetch incidents
   const fetchIncidents = async () => {
-    const res = await fetch("http://127.0.0.1:8000/incidents");
-    const data = await res.json();
+    try {
+      const res = await fetch(`${API_URL}/incidents`);
+      const data = await res.json();
 
-    // Sort: OPEN first, CLOSED last
-    data.sort((a, b) => {
-      if (a.status === "OPEN" && b.status !== "OPEN") return -1;
-      if (a.status !== "OPEN" && b.status === "OPEN") return 1;
-      return a.id - b.id;
-    });
+      // Sort: OPEN first
+      data.sort((a, b) => {
+        if (a.status === "OPEN" && b.status !== "OPEN") return -1;
+        if (a.status !== "OPEN" && b.status === "OPEN") return 1;
+        return a.id - b.id;
+      });
 
-    setIncidents(data);
+      setIncidents(data);
+
+      // Keep selected incident updated
+      if (selected) {
+        const updated = data.find((i) => i.id === selected.id);
+        setSelected(updated);
+      }
+
+    } catch (err) {
+      console.error("Error fetching incidents:", err);
+    }
   };
 
+  //  Auto refresh every 5 sec (important)
   useEffect(() => {
     fetchIncidents();
+
+    const interval = setInterval(() => {
+      fetchIncidents();
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const selectIncident = (incident) => {
     setSelected(incident);
-    setRca({ root_cause: "", fix: "" }); // reset RCA form
+    setRca({ root_cause: "", fix: "" });
   };
 
   const updateStatus = async (status) => {
-    await fetch(`http://127.0.0.1:8000/incidents/${selected.id}/status`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
+    try {
+      await fetch(`${API_URL}/incidents/${selected.id}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
 
-    await fetchIncidents();
+      await fetchIncidents();
+    } catch (err) {
+      console.error("Error updating status:", err);
+    }
   };
 
   const submitRCA = async () => {
-    await fetch(`http://127.0.0.1:8000/incidents/${selected.id}/rca`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(rca),
-    });
+    try {
+      await fetch(`${API_URL}/incidents/${selected.id}/rca`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rca),
+      });
 
-    setRca({ root_cause: "", fix: "" });
-    await fetchIncidents();
+      setRca({ root_cause: "", fix: "" });
+      await fetchIncidents();
+    } catch (err) {
+      console.error("Error submitting RCA:", err);
+    }
   };
 
   return (
     <div style={{ padding: 20 }}>
-      <h1> Incident Dashboard</h1>
+      <h1>Incident Dashboard</h1>
 
       <h2>Incidents</h2>
+
+      {incidents.length === 0 && <p>No incidents yet...</p>}
 
       {incidents.map((i) => (
         <div
@@ -70,7 +101,7 @@ function App() {
           <p><strong>ID:</strong> {i.id}</p>
           <p><strong>Component:</strong> {i.component}</p>
           <p><strong>Status:</strong> {i.status}</p>
-          <p><strong>MTTR:</strong> {i.mttr_seconds || "N/A"}</p>
+          <p><strong>MTTR:</strong> {i.mttr_seconds ? i.mttr_seconds.toFixed(2) : "N/A"}</p>
         </div>
       ))}
 
@@ -81,13 +112,11 @@ function App() {
           <p><strong>ID:</strong> {selected.id}</p>
           <p><strong>Status:</strong> {selected.status}</p>
 
-          {/* RCA status indicator */}
           <p>
             <strong>RCA Status:</strong>{" "}
-            {selected.status === "CLOSED" ? "Available " : "Not Added ❌"}
+            {selected.status === "CLOSED" ? "Available " : "Not Added"}
           </p>
 
-          {/* Status buttons */}
           <div style={{ marginTop: 10 }}>
             <button onClick={() => updateStatus("INVESTIGATING")}>
               Investigate
@@ -97,7 +126,6 @@ function App() {
               Resolve
             </button>
 
-            {/* Disable close if RCA not filled */}
             <button
               onClick={() => updateStatus("CLOSED")}
               disabled={!rca.root_cause || !rca.fix}
@@ -106,7 +134,6 @@ function App() {
             </button>
           </div>
 
-          {/* RCA Form */}
           <h3>RCA</h3>
 
           <input

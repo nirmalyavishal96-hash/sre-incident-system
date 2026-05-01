@@ -1,5 +1,5 @@
 import os
 
-DATABASE_URL = "postgresql://user:password@localhost:5432/ims_db"
+DATABASE_URL = "postgresql://user:password@postgres:5432/ims_db"
 
-REDIS_URL = "redis://localhost:6379"
+REDIS_URL = "redis://redis:6379"

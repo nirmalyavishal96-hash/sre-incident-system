@@ -1,302 +1,415 @@
 # Incident Management System (IMS)
 
-A scalable, production-inspired Incident Management System designed to ingest high-volume signals, intelligently group them into incidents, and manage their lifecycle with mandatory Root Cause Analysis (RCA).
+A production-inspired **SRE-grade Incident Management System** designed to ingest high-volume signals, intelligently group them into incidents, monitor system health, and trigger alerts based on real-time metrics.
 
 ---
 
-## Overview
+# Overview
 
-This system simulates a real-world SRE incident platform similar to PagerDuty/Datadog.
+This system simulates a real-world SRE platform similar to **PagerDuty / Datadog / New Relic**.
 
 It is designed to:
 
-- Handle high-volume signals (burst traffic)
-- Reduce alert noise via debouncing
-- Track incident lifecycle
-- Enforce RCA before closure
-- Provide real-time dashboard visibility
+* Handle high-volume signals (burst traffic)
+* Reduce alert noise via debouncing
+* Track incident lifecycle
+* Enforce RCA before closure
+* Provide real-time dashboards
+* Monitor system health using Prometheus
+* Trigger alerts using Grafana
 
 ---
 
-## Architecture
+# Architecture
 
-    +----------------------+
-    |   Signal Producer    |
-    +----------+-----------+
-               |
-               v
-    +----------------------+
-    |   FastAPI Backend    |
-    |  (Ingestion API)     |
-    +----------+-----------+
-               |
-               v
-    +----------------------+
-    |   Redis Queue        |
-    | (Backpressure Buffer)|
-    +----------+-----------+
-               |
-               v
-    +----------------------+
-    |   Worker Process     |
-    | (Async Processing)   |
-    +----------+-----------+
-               |
-               v
-    +----------------------+
-    |   PostgreSQL DB      |
-    | (Source of Truth)    |
-    +----------+-----------+
-               |
-               v
-    +----------------------+
-    |   React Dashboard    |
-    +----------------------+
+```
+        +----------------------+
+        |   Signal Producer    |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        |   FastAPI Backend    |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        |   Redis Queue        |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        |   Worker Process     |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        |   PostgreSQL DB      |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        |   React Dashboard    |
+        +----------------------+
 
----
+        -------- Observability Layer --------
 
-## Tech Stack
-
-| Layer | Technology | Why |
-|------|------------|-----|
-| Backend | FastAPI | Async support, fast development |
-| Queue + Cache | Redis | Lightweight, fast, supports queueing |
-| Database | PostgreSQL | Strong consistency, relational |
-| Frontend | React | Simple and interactive UI |
-| Containerization | Docker | Easy setup and portability |
-
----
-## System Design Decisions
-
-- **FastAPI** chosen for async capabilities and simplicity in building high-performance APIs.
-- **Redis** used as both queue and cache to handle burst traffic and enable backpressure.
-- **PostgreSQL** selected as the source of truth for strong consistency and relational modeling.
-- **Worker-based architecture** ensures decoupling between ingestion and processing.
-- **Debouncing via Redis TTL** reduces noise and prevents alert storms.
-
-## Key Features
-
-### 1. Async Signal Processing
-- Signals are pushed to Redis queue
-- Worker consumes asynchronously
-- Prevents API overload
+        +----------------------+
+        |   Prometheus         |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        |   Grafana            |
+        +----------+-----------+
+                   |
+                   v
+        +----------------------+
+        |   Email Alerts       |
+        +----------------------++
+```
 
 ---
 
-### 2. Debouncing Logic (Noise Reduction)
-- Multiple signals within 10 seconds → grouped into 1 incident
-- Implemented using Redis TTL
+# Tech Stack
+
+| Layer            | Technology          |
+| ---------------- | ------------------- |
+| Backend          | FastAPI             |
+| Queue            | Redis               |
+| Worker           | Python Async Worker |
+| Database         | PostgreSQL          |
+| Frontend         | React               |
+| Monitoring       | Prometheus          |
+| Alerting         | Grafana             |
+| Containerization | Docker              |
 
 ---
 
-### 3. Incident Lifecycle (Workflow Engine)
+# Core Features
 
+## 1. Async Signal Processing
 
+* Signals pushed to Redis queue
+* Worker processes asynchronously
+* Prevents API overload
+
+---
+
+## 2. Debouncing (Noise Reduction)
+
+* Signals within 10 seconds grouped into 1 incident
+* Implemented using Redis TTL
+
+---
+
+## 3. Incident Lifecycle
+
+```
 OPEN → INVESTIGATING → RESOLVED → CLOSED
+```
 
-
-- Enforced via API
-- Prevents invalid transitions
-
----
-
-### 4. Mandatory RCA Validation
-
-- Cannot close incident without RCA
-- Ensures accountability
+* Enforced transitions
+* Prevents invalid state changes
 
 ---
 
-### 5. MTTR Calculation
+## 4. Mandatory RCA Validation
 
+* Cannot close incident without RCA
+* Ensures accountability
 
+---
+
+## 5. MTTR Calculation
+
+```
 MTTR = resolved_at - created_at
+```
 
-
-- Automatically calculated
-- Exposed in API and UI
-
----
-
-### 6. Rate Limiting
-
-- Prevents API overload
-- Basic per-IP throttling implemented
+* Automatically computed
+* Visible in dashboard
 
 ---
 
-### 7. Observability
+## 6. Rate Limiting
 
-- `/health` endpoint
-- Throughput logging (signals/sec)
-
----
-
-### 8. Real-Time Dashboard
-
-Frontend allows:
-
-- View all incidents
-- Click to view details
-- Update status
-- Submit RCA
-- View MTTR
-
-
-
-## Concurrency & Scaling
-
-- Asynchronous processing implemented using Redis queue + worker model.
-- System can handle burst traffic as ingestion is decoupled from processing.
-- Backpressure handled via queue buffering.
-- Rate limiting prevents overload at API level.
-
-## Backpressure Handling
-
-To handle high traffic:
-
-- Redis queue acts as a **buffer**
-- API does not directly write to DB
-- Worker processes signals asynchronously
-
-
-High Load → Queue absorbs → Worker processes gradually
-
-
-This prevents system crashes during bursts.
+* Prevents API abuse
+* Basic per-IP throttling
 
 ---
 
-## Data Model
+## 7. Backpressure Handling
 
-### Incident
-- id
-- component
-- status
-- created_at
-- resolved_at
+```
+High Load → Redis Queue → Worker → DB
+```
 
-### Signal
-- id
-- component
-- error
-- incident_id
-
-### RCA
-- incident_id
-- root_cause
-- fix
+* Queue absorbs bursts
+* System remains stable under load
 
 ---
 
-##  Setup Instructions
+# Observability & Monitoring
 
-### 1. Clone repo
+## Metrics exposed:
+
+* `api_requests_total`
+* Request rate (RPS)
+* Error rate (5xx)
+* Request latency (histogram)
+
+---
+
+## Grafana Dashboard Panels
+
+* Total Signals
+* API Throughput (RPS)
+* Queue Depth
+* Signal Ingestion Rate
+* Error Rate (%)
+* P95 Latency
+* Requests by Endpoint
+
+---
+
+# Alerting (Grafana)
+
+## 1. High Error Rate Alert
+
+**Condition:**
+
+```
+Error Rate > 5%
+```
+
+**Meaning:**
+
+* Backend instability
+* API failures
+
+---
+
+## 2. High Latency Alert (P95)
+
+**Condition:**
+
+```
+P95 Latency > 500 ms
+```
+
+**Meaning:**
+
+* Performance degradation
+* Slow responses
+
+---
+
+## Notification System
+
+* Email alerts configured via SMTP
+* Real-time alert delivery
+* Includes:
+
+  * Alert name
+  * Severity
+  * Metrics value
+  * Labels
+
+---
+
+# Data Model
+
+## Incident
+
+* id
+* component
+* status
+* created_at
+* resolved_at
+
+## Signal
+
+* id
+* component
+* error
+* incident_id
+
+## RCA
+
+* incident_id
+* root_cause
+* fix
+
+---
+
+# Setup Instructions
+
+## 1. Clone Repo
 
 ```bash
 git clone https://github.com/nirmalyavishal96-hash/sre-incident-system.git
 cd sre-incident-system
 ```
-### 2. Start services
+
+---
+
+## 2. Start Full System (Recommended)
+
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
-### 3. Backend setup
+
+---
+
+## 3. Access Services
+
+| Service    | URL                   |
+| ---------- | --------------------- |
+| Backend    | http://localhost:8000 |
+| Prometheus | http://localhost:9090 |
+| Grafana    | http://localhost:3001 |
+
+---
+
+# Testing the System
+
+## Send normal traffic
+
 ```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+for i in {1..50}; do curl -s http://localhost:8000/metrics > /dev/null; done
 ```
-### 4. Run worker
+
+---
+
+## Simulate Errors (Trigger Alert)
+
 ```bash
-cd backend
-python -m app.worker
+for i in {1..50}; do curl -s http://localhost:8000/error > /dev/null; done
 ```
-### 5. Start frontend
+
+---
+
+## Verify Metrics
+
 ```bash
-cd frontend
-npm install
-npm start
+curl http://localhost:8000/metrics | grep api_requests_total
 ```
-## Sample Test Data
 
-Send signals:
-```bash
-curl -X POST http://127.0.0.1:8000/ingest \
--H "Content-Type: application/json" \
--d '{"component":"CACHE_CLUSTER_01","error":"timeout"}'
-```
-## Simulating Failure Burst
-```bash
-for i in {1..20}; do 
-  curl -X POST http://127.0.0.1:8000/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"component":"CACHE_CLUSTER_01","error":"timeout"}'
-done
-```
-## Testing RCA Validation
-### Should fail
-```bash
-PUT /incidents/{id}/status → CLOSED
+---
 
-# Add RCA
-POST /incidents/{id}/rca
-
-# Then close
-PUT /incidents/{id}/status → CLOSED
+# Example Alert Flow
 
 ```
-## Resilience & Retry Logic
+User traffic → Metrics increase → Prometheus scrapes → Grafana evaluates → Alert fires → Email sent
+```
 
-- Database writes are protected with retry mechanism.
-- Worker retries operations on transient failures.
-- Queue ensures signals are not lost during failures.
-- RCA validation logic tested manually via API workflows
+---
 
+# System Design Highlights
 
+* Decoupled architecture (API vs Worker)
+* Queue-based backpressure handling
+* Real-time observability
+* Alert-driven monitoring
+* Production-like failure simulation
+* Designed following SRE principles (SLI, SLO, alerting thresholds)
 
-## Metrics
-- Signals/sec printed every 5 seconds
-- Helps monitor ingestion rate
+---
 
-##  Bonus Features
-- Rate limiting
-- MTTR calculation
-- Debouncing logic
-- Observability logs
+# Future Enhancements
 
-## Submission Details
-GitHub Repo: https://github.com/nirmalyavishal96-hash/sre-incident-system.git
+* Auto-healing (restart services on alert)
+* Slack / PagerDuty integration
+* Distributed tracing (Jaeger)
+* Kubernetes deployment
+* Advanced alert routing
 
-Includes:
+---
 
+<<<<<<< HEAD
 - Backend
 - Frontend
 - Docker setup
 - README
 
 ## Dashboard Preview
+=======
+# Screenshots
+>>>>>>> aebc7a5 (obserbility and alerting addded)
 
+### System Dashboard 
 ![Dashboard](./screenshot/dashboard.png)
 
-UI integrates fully with backend APIs and supports full incident lifecycle management
-##  Development Notes
+### Alert Triggered
+![alert](./screenshot/Alert-trigger.png)
 
+<<<<<<< HEAD
 - This project was developed using iterative planning and system design prompts.
 - Design decisions, architecture, and implementation steps were documented during development.
 ## Project Structure
+=======
+### Email Notification
+![email](./screenshot/Email.png)
+>>>>>>> aebc7a5 (obserbility and alerting addded)
 
+### Metrics Endpoint
+![metrics](./screenshot/metrics.png)
+
+### Grafana Dashboard
+![Grafana Dashboard](./screenshot/Grafana-Dasboard.png)
+
+### Error Rate (PromQL)
+Calculates percentage of failed requests over total requests (5xx errors)
+![error-query](./screenshot/error-query.png)
+
+### P95 Latency (PromQL)
+Tracks 95th percentile latency to detect slow responses
+
+![latency-query](./screenshot/latency-query.png)
+
+
+
+---
+
+# Project Structure
+
+```
 backend/
-
-app/
-
+  app/
 frontend/
-
 screenshot/
-
 docker-compose.yml
+README.md
+```
 
- README.md
-# Author
+---
+# Version Upgrade (v2)
 
-Nirmalya Das
+This project was enhanced after initial submission with production-grade observability and alerting features.
+
+## Added in v2:
+
+- Prometheus integration for metrics scraping
+- Grafana dashboards for real-time monitoring
+- Alerting system (Error Rate & Latency)
+- Email notifications using SMTP
+- Failure simulation endpoints (/error)
+- P95 latency tracking
+
+## Why this matters:
+
+These upgrades transform the system from a backend project into a **complete SRE monitoring system**, demonstrating real-world production practices.
+
+# Key Learning Outcomes
+
+- Implemented real-time monitoring using Prometheus
+- Designed alerting based on error rate and latency (SLO-driven)
+- Built scalable async architecture using Redis queue
+- Simulated production failures and validated alerting system
+
+# Author 
+**Nirmalya Das**
+
+
+

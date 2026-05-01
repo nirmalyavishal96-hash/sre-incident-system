@@ -1,60 +1,40 @@
-from app.database import SessionLocal
-from app.models import Incident, Signal
-from datetime import datetime
-
 import time
 import json
-from datetime import datetime, timedelta
-
-from app.database import redis_client, SessionLocal
-
+from app.database import SessionLocal, redis_client
+from app.models import Incident, Signal
 
 print("Worker started...")
-
-DEBOUNCE_WINDOW = 10  # seconds
 
 while True:
     data = redis_client.lpop("signal_queue")
 
-    if data:
-        signal = json.loads(data)
-        component = signal.get("component")
-        error = signal.get("error")
+    if not data:
+        time.sleep(1)
+        continue
 
-        db = SessionLocal()
+    data = json.loads(data)
+    component = data.get("component", "unknown")
+    status = data.get("status", "unknown")
 
-        # Check Redis for existing incident
-        incident_key = f"incident:{component}"
-        incident_id = redis_client.get(incident_key)
+    db = SessionLocal()
 
-        if incident_id:
-            print(f"Reusing incident {incident_id} for {component}")
-            incident = db.query(Incident).filter(Incident.id == int(incident_id)).first()
-        else:
-            print(f"Creating new incident for {component}")
+    # Check for open incident
+    incident = db.query(Incident).filter(
+        Incident.component == component,
+        Incident.status == "OPEN"
+    ).first()
 
-            incident = Incident(
-                component=component,
-                status="OPEN",
-                severity="P2"
-            )
-            db.add(incident)
-            db.commit()
-            db.refresh(incident)
-
-            # store in Redis with expiry (debounce window)
-            redis_client.setex(incident_key, DEBOUNCE_WINDOW, incident.id)
-
-        # Store signal
-        new_signal = Signal(
-            component=component,
-            error=error,
-            incident_id=incident.id
-        )
-
-        db.add(new_signal)
+    if incident:
+        print(f"Reusing incident {incident.id} for {component}")
+    else:
+        incident = Incident(component=component, status="OPEN")
+        db.add(incident)
         db.commit()
+        db.refresh(incident)
+        print(f"Creating new incident for {component}")
 
-        db.close()
+    signal = Signal(component=component, incident_id=incident.id)
+    db.add(signal)
+    db.commit()
 
-    time.sleep(1)
+    db.close()

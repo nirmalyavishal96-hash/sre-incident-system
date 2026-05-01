@@ -1,6 +1,24 @@
 version: "3.8"
 
 services:
+  backend:
+    build: ./backend
+    container_name: ims_backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+
+  worker:
+    build: ./backend
+    container_name: ims_worker
+    command: python -u -m app.worker   
+    depends_on:
+      - postgres
+      - redis
+
   postgres:
     image: postgres:15
     container_name: ims_postgres
@@ -16,3 +34,23 @@ services:
     container_name: ims_redis
     ports:
       - "6379:6379"
+
+  prometheus:
+    image: prom/prometheus
+    container_name: ims_prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana
+    container_name: ims_grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana 
+    env_file:
+      - .env
+volumes:
+  grafana_data:
